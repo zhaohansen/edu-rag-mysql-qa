@@ -3,6 +3,7 @@ from unittest import result
 import pymysql
 import pandas as pd
 import sys, os
+from pathlib import Path
 
 current_dir = os.path.dirname(os.path.realpath(__file__))
 next_dir = os.path.dirname(current_dir)
@@ -15,6 +16,9 @@ from base import Config, logger
 class MySQLClient(object):
     def __init__(self):
         self.logger = logger
+        self.conn = None
+        self.cursor = None
+        self._offline_data = None
         try:
             self.conn = pymysql.connect(
                 host=Config.mysql_host,
@@ -25,8 +29,9 @@ class MySQLClient(object):
             self.cursor = self.conn.cursor()
             self.logger.info("MySQL 数据库连接成功")
         except pymysql.MySQLError as e:
-            self.logger.error(f"MySQL 数据库连接失败：{e}")
-            raise
+            self.logger.warning(f"MySQL 不可用，改用本地 CSV 数据：{e}")
+            csv_path = Path(__file__).with_name("jpkb_test_200.csv")
+            self._offline_data = pd.read_csv(csv_path, encoding="utf-8")
 
     def create_table(self):
 
@@ -58,6 +63,8 @@ class MySQLClient(object):
             self.logger.error(f"问答数据导入失败：{e}")
 
     def fetch_questions(self):
+        if self._offline_data is not None:
+            return [(question,) for question in self._offline_data["问题"].dropna().tolist()]
         try:
             sql = "select question from jpkb "
             self.cursor.execute(sql)
@@ -69,6 +76,11 @@ class MySQLClient(object):
             return None
 
     def answer(self, question):
+        if self._offline_data is not None:
+            matched = self._offline_data[
+                self._offline_data["问题"].astype(str).str.contains(str(question).strip(), regex=False, na=False)
+            ]
+            return matched.iloc[0]["答案"] if not matched.empty else None
         try:
             sql = "select answer from jpkb where question like %s"
             self.cursor.execute(sql, (f"%{question.strip()}%",))
@@ -81,6 +93,8 @@ class MySQLClient(object):
 
     def close(self):
         try:
+            if self.cursor is None or self.conn is None:
+                return
             self.cursor.close()
             self.conn.close()
             self.logger.info("MySQL 数据库连接已关闭")

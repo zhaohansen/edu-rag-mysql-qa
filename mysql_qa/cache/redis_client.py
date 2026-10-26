@@ -8,6 +8,8 @@ class RedisClient():
     def __init__(self):
         self.config = Config()
         self.logger = logger
+        self.client = None
+        self._memory = {}
         try:
             self.client = redis.Redis(
                 host=self.config.redis_host,
@@ -19,11 +21,14 @@ class RedisClient():
             self.client.ping()
             self.logger.info("Redis 连接成功")
         except Exception as e:
-            self.logger.error(f"Redis 连接失败：{e}")
-            raise
+            self.client = None
+            self.logger.warning(f"Redis 不可用，改用进程内缓存：{e}")
 
     def set_data(self, key, value):
         try:
+            if self.client is None:
+                self._memory[key] = value
+                return
             self.client.set(key, json.dumps(value, ensure_ascii=False))
             self.logger.info("Redis 缓存写入成功")
 
@@ -32,6 +37,8 @@ class RedisClient():
 
     def get_data(self, key):
         try:
+            if self.client is None:
+                return self._memory.get(key)
             result = self.client.get(key)
             if result:
                 self.logger.info("Redis 缓存读取成功")
